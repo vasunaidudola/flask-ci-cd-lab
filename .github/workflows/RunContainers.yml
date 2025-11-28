@@ -1,0 +1,175 @@
+name: Run Containers
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - 'bucketActions/**'
+      - 'terraform/**'
+      - '.gitignore'
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: ap-south-1
+  STAGING_INSTANCE_ID: ${{ secrets.STAGING_INSTANCE_ID }}
+  DOCKER_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+  DOCKER_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
+
+jobs:
+  start_staging_server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install boto3
+        run: pip install boto3
+
+      - name: Start Staging Server
+        working-directory: .github/ci_scripts
+        run: python start_staging_server.py
+
+  pylint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install CI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements/ci-requirements.txt
+
+      - name: Run Pylint (code quality)
+        run: |
+          pylint app.py --output-format=text || true
+
+  unit_tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install CI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements/ci-requirements.txt
+
+      - name: Run unit tests (pytest)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python -m pytest -q
+
+      - name: Stop Staging Server on failure
+        if: ${{ failure() }}
+        working-directory: .github/ci_scripts
+        run: |
+          pip install boto3
+          python stop_staging_server.py
+
+  build_docker_image:
+    needs: [pylint, unit_tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Flask Docker image
+        run: |
+          DATE=$(date +'%Y-%m-%d')
+          docker build --tag ${{ env.DOCKER_USERNAME }}/flask-ci-demo:${DATE} \
+                       --tag ${{ env.DOCKER_USERNAME }}/flask-ci-demo:latest .
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+
+      - name: Push image to Docker Hub
+        run: |
+          DATE=$(date +'%Y-%m-%d')
+          docker push ${{ env.DOCKER_USERNAME }}/flask-ci-demo:${DATE}
+          docker push ${{ env.DOCKER_USERNAME }}/flask-ci-demo:latest
+
+      - name: Stop Staging Server on failure
+        if: ${{ failure() }}
+        working-directory: .github/ci_scripts
+        run: |
+          pip install boto3
+          python stop_staging_server.py
+
+  pull_image_and_start_containers:
+    needs: [build_docker_image, start_staging_server]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install boto3
+        run: pip install boto3
+
+      - name: Get Staging Server IP
+        id: get_staging_server_ip
+        working-directory: .github/ci_scripts
+        run: python get_staging_server_ip.py
+
+      - name: Export STAGING_SERVER_IP
+        run: echo "STAGING_SERVER_IP=${{ steps.get_staging_server_ip.outputs.public_ip }}" >> $GITHUB_ENV
+
+      - name: Create .env file
+        env:
+          DOCKER_IMAGE: ${{ env.DOCKER_USERNAME }}/flask-ci-demo:latest
+        run: |
+          python .github/ci_scripts/create_env.py
+
+      - name: Stop previous containers and clean images
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.STAGING_SERVER_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /home/ubuntu
+            sudo docker compose down || true
+            sudo docker system prune --all --force || true
+
+      - name: Copy files to Staging Server
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ env.STAGING_SERVER_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "compose.yml,nginx.conf,.env"
+          target: "/home/ubuntu"
+
+      - name: Pull Docker image and start containers
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.STAGING_SERVER_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /home/ubuntu
+            sudo docker compose up -d
+            rm .env
+
+      - name: Stop Staging Server on failure
+        if: ${{ failure() }}
+        working-directory: .github/ci_scripts
+        run: |
+          pip install boto3
+          python stop_staging_server.py
