@@ -1,0 +1,69 @@
+name: Create Image
+
+on:
+  pull_request:
+    types: [ closed ]
+    branches:
+      - main
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: ap-south-1
+  STAGING_INSTANCE_ID: ${{ secrets.STAGING_INSTANCE_ID }}
+
+jobs:
+  create_image:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install boto3
+        run: pip install boto3
+
+      - name: Create AMI from Staging Server
+        run: |
+          python - << 'PY'
+          import os, boto3, datetime
+          access_key = os.environ["AWS_ACCESS_KEY_ID"]
+          secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
+          region = os.environ["AWS_DEFAULT_REGION"]
+          instance_id = os.environ["STAGING_INSTANCE_ID"]
+
+          ec2 = boto3.client(
+              "ec2",
+              aws_access_key_id=access_key,
+              aws_secret_access_key=secret_key,
+              region_name=region,
+          )
+
+          name = "flask-ci-demo-" + datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+          print(f"Creating AMI {name} from {instance_id}")
+          ec2.create_image(InstanceId=instance_id, Name=name, NoReboot=True)
+          PY
+
+  stop_staging_server:
+    if: github.event.pull_request.merged == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install boto3
+        run: pip install boto3
+
+      - name: Stop Staging Server
+        run: |
+          python - << 'PY'
+          import os, boto3
+          access_key = os.environ["AWS_ACCESS_KEY_ID"]
+          secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
+          region = os.environ["AWS_DEFAULT_REGION"]
+          instance_id = os.environ["STAGING_INSTANCE_ID"]
+
+          ec2 = boto3.client(
+              "ec2",
+              aws_access_key_id=access_key,
+              aws_secret_access_key=secret_key,
+              region_name=region,
+          )
+
+          print(f"Stopping staging instance: {instance_id}")
+          ec2.stop_instances(InstanceIds=[instance_id])
+          PY
