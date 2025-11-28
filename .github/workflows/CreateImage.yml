@@ -2,7 +2,7 @@ name: Create Image
 
 on:
   pull_request:
-    types: [ closed ]
+    types: [closed]
     branches:
       - main
 
@@ -14,8 +14,10 @@ env:
 
 jobs:
   create_image:
+    # Only run this job when the PR was merged
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+
     steps:
       - name: Install boto3
         run: pip install boto3
@@ -24,6 +26,7 @@ jobs:
         run: |
           python - << 'PY'
           import os, boto3, datetime
+
           access_key = os.environ["AWS_ACCESS_KEY_ID"]
           secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
           region = os.environ["AWS_DEFAULT_REGION"]
@@ -42,8 +45,9 @@ jobs:
           PY
 
   stop_staging_server:
-    if: github.event.pull_request.merged == false
+    # Always stop the instance when PR is closed (merged or not)
     runs-on: ubuntu-latest
+
     steps:
       - name: Install boto3
         run: pip install boto3
@@ -52,6 +56,7 @@ jobs:
         run: |
           python - << 'PY'
           import os, boto3
+
           access_key = os.environ["AWS_ACCESS_KEY_ID"]
           secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
           region = os.environ["AWS_DEFAULT_REGION"]
