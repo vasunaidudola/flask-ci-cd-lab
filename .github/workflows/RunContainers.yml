@@ -52,7 +52,7 @@ jobs:
         run: |
           pylint app.py --output-format=text || true
 
-    unit_tests:
+  unit_tests:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -72,7 +72,6 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: python -m pytest -q
-
 
       - name: Stop Staging Server on failure
         if: ${{ failure() }}
@@ -165,10 +164,6 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd /home/ubuntu
-            sudo apt-get update -y
-            sudo apt-get install -y docker.io docker-compose-plugin
-            sudo systemctl enable docker
-            sudo systemctl start docker
             sudo docker compose up -d
             rm .env
 
