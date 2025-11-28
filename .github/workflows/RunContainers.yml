@@ -52,7 +52,7 @@ jobs:
         run: |
           pylint app.py --output-format=text || true
 
-  unit_tests:
+    unit_tests:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -69,7 +69,10 @@ jobs:
           pip install -r requirements/ci-requirements.txt
 
       - name: Run unit tests (pytest)
-        run: pytest -q
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python -m pytest -q
+
 
       - name: Stop Staging Server on failure
         if: ${{ failure() }}
