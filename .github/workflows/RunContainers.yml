@@ -145,7 +145,7 @@ jobs:
           script: |
             cd /home/ubuntu
             sudo docker compose down || true
-            sudo docker system prune --all --force -y
+            sudo docker system prune --all --force || true
 
       - name: Copy files to Staging Server
         uses: appleboy/scp-action@v1
